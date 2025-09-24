@@ -1,18 +1,33 @@
 import streamlit as st
-from icalendar import Calendar
+from icalendar import Calendar, Event
 import re
 import io
+import os
 
-st.set_page_config(page_title="Export ICS par enseignant (multi-fichiers)")
+st.set_page_config(page_title="Export ICS par enseignant (multi-fichiers + groupes/promo/classe)")
 
-@st.cache_data
+def detect_file_context(filename):
+    """
+    Analyse le nom du fichier pour extraire promo (P1/P2) et classe (A1..A6).
+    Retourne dict { 'promo': 'P1', 'classe': 'A3' }
+    """
+    promo_regex = re.compile(r'\bP[1-9]\b', re.IGNORECASE)
+    classe_regex = re.compile(r'\bA[1-9]\b', re.IGNORECASE)
+
+    promo = None
+    classe = None
+
+    promo_match = promo_regex.findall(filename)
+    if promo_match:
+        promo = promo_match[0].upper()
+
+    classe_match = classe_regex.findall(filename)
+    if classe_match:
+        classe = classe_match[0].upper()
+
+    return {"promo": promo, "classe": classe}
+
 def parse_calendars(files):
-    """
-    Prend une liste de fichiers .ics et retourne :
-      - liste des Calendar complets
-      - liste des events [{ 'component': VEVENT, 'teachers': [...] }]
-      - liste des enseignants uniques triés
-    """
     all_cals = []
     events = []
     enseignants_set = set()
@@ -21,10 +36,13 @@ def parse_calendars(files):
         r'([A-ZÀ-Ÿ][A-ZÀ-Ÿ\'\-\s]+)\\?,\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\'\-\s]+)',
         re.UNICODE
     )
+    group_regex = re.compile(r'G\s*([1-9])', re.IGNORECASE)
 
     for f in files:
+        context = detect_file_context(f.name)
         cal = Calendar.from_ical(f.read())
         all_cals.append(cal)
+
         for component in cal.walk():
             if component.name == "VEVENT":
                 desc = component.get("DESCRIPTION")
@@ -34,8 +52,9 @@ def parse_calendars(files):
                     desc_text = desc.to_ical().decode("utf-8")
                 else:
                     desc_text = str(desc)
-
                 desc_text = desc_text.replace("\\,", ",")
+
+                # Détection enseignants
                 found = teacher_regex.findall(desc_text)
                 teachers = []
                 for last, first in found:
@@ -43,25 +62,62 @@ def parse_calendars(files):
                     teachers.append(name)
                     enseignants_set.add(name)
 
-                events.append({"component": component, "teachers": teachers})
+                # Détection groupes
+                groups = group_regex.findall(desc_text)
+                groups_fmt = [f"G{g}" for g in groups]
 
+                events.append({
+                    "component": component,
+                    "teachers": teachers,
+                    "groups": groups_fmt,
+                    "promo": context["promo"],
+                    "classe": context["classe"]
+                })
     return all_cals, events, sorted(enseignants_set)
 
 def build_filtered_calendar(orig_cals, events, selected_teachers):
     new_cal = Calendar()
-    # Copier les propriétés du premier calendrier (VERSION, PRODID, etc.)
     if orig_cals:
         for k, v in orig_cals[0].items():
             new_cal.add(k, v)
-    # Ajouter uniquement les événements correspondant
+
     for ev in events:
         if any(t in ev["teachers"] for t in selected_teachers):
-            new_cal.add_component(ev["component"])
+            comp = ev["component"]
+            summary = str(comp.get("SUMMARY") or "")
+
+            extra_parts = []
+            if ev["promo"]:
+                extra_parts.append(ev["promo"])
+            if ev["classe"]:
+                extra_parts.append(ev["classe"])
+            if ev["groups"]:
+                extra_parts.extend(ev["groups"])
+
+            if extra_parts:
+                summary = f"{summary} [{' - '.join(extra_parts)}]"
+
+            # cloner l’événement pour éviter de modifier l’original
+            new_event = Event()
+            for k, v in comp.items():
+                if k.upper() == "SUMMARY":
+                    new_event.add("SUMMARY", summary)
+                else:
+                    new_event.add(k, v)
+            for sub in comp.subcomponents:
+                new_event.add_component(sub)
+
+            new_cal.add_component(new_event)
+
     return new_cal
 
 st.title("📅 Mini-bridge : Exporter un .ics par enseignant")
 
-uploaded_files = st.file_uploader("Chargez un ou plusieurs fichiers .ics (EDT)", type=["ics"], accept_multiple_files=True)
+uploaded_files = st.file_uploader(
+    "Chargez un ou plusieurs fichiers .ics", 
+    type=["ics"], 
+    accept_multiple_files=True
+)
 
 if uploaded_files:
     all_cals, events, enseignants = parse_calendars(uploaded_files)
@@ -81,10 +137,16 @@ if uploaded_files:
                     start = comp.get("DTSTART").dt if comp.get("DTSTART") else None
                     end = comp.get("DTEND").dt if comp.get("DTEND") else None
                     summary = str(comp.get("SUMMARY") or "")
+                    extra = []
+                    if ev["promo"]: extra.append(ev["promo"])
+                    if ev["classe"]: extra.append(ev["classe"])
+                    if ev["groups"]: extra.extend(ev["groups"])
+                    if extra:
+                        summary = f"{summary} [{' - '.join(extra)}]"
                     matching.append({
                         "DTSTART": start,
                         "DTEND": end,
-                        "SUMMARY": summary,
+                        "SUMMARY (modifié)": summary,
                         "ENSEIGNANTS": ", ".join(ev["teachers"]) or ""
                     })
 
