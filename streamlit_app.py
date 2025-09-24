@@ -1,50 +1,99 @@
 import streamlit as st
-from icalendar import Calendar, Event
+from icalendar import Calendar
+import re
 import io
 
-# Charger le fichier ICS
+st.set_page_config(page_title="Export ICS par enseignant")
+
 @st.cache_data
-def load_calendar(file):
-    gcal = Calendar.from_ical(file.read())
+def parse_calendar(file_bytes):
+    """
+    Retourne (calendar_object, events_list, enseignants_sorted)
+    events_list : list de dict { 'component': VEVENT, 'teachers': [ "NOM, Prénom", ... ] }
+    """
+    cal = Calendar.from_ical(file_bytes)
     events = []
-    enseignants = set()
-    for component in gcal.walk():
+    enseignants_set = set()
+
+    # regex pour capturer "NOM, Prénom" ; accepte la virgule échappée "\," aussi
+    teacher_regex = re.compile(
+        r'([A-ZÀ-Ÿ][A-ZÀ-Ÿ\'\-\s]+)\\?,\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\'\-\s]+)',
+        re.UNICODE
+    )
+
+    for component in cal.walk():
         if component.name == "VEVENT":
-            desc = component.get("DESCRIPTION", "")
-            if "Enseignant(s):" in desc:
-                # Extraire les enseignants
-                for part in desc.split("Enseignant(s):")[-1].split("\\n")[0].split(","):
-                    enseignants.add(part.strip())
-            events.append(component)
-    return gcal, events, sorted(enseignants)
+            desc = component.get("DESCRIPTION")
+            # robustification : extraire le texte correctement selon le type renvoyé
+            if desc is None:
+                desc_text = ""
+            elif hasattr(desc, "to_ical"):
+                desc_text = desc.to_ical().decode("utf-8")
+            else:
+                desc_text = str(desc)
+            # unescape de la virgule si présente
+            desc_text = desc_text.replace("\\,", ",")
+            found = teacher_regex.findall(desc_text)
+            teachers = []
+            for last, first in found:
+                name = f"{last.strip()}, {first.strip()}"
+                teachers.append(name)
+                enseignants_set.add(name)
+            events.append({"component": component, "teachers": teachers})
+    return cal, events, sorted(enseignants_set)
 
-def filter_calendar(gcal, events, enseignant):
+def build_filtered_calendar(orig_cal, events, selected_teachers):
     new_cal = Calendar()
-    # Copier les propriétés principales
-    for name, value in gcal.items():
-        new_cal.add(name, value)
-
-    for component in events:
-        desc = component.get("DESCRIPTION", "")
-        if enseignant in desc:
-            new_cal.add_component(component)
+    # copier les propriétés top-level (VERSION, PRODID, ...)
+    for k, v in orig_cal.items():
+        new_cal.add(k, v)
+    # ajouter uniquement les événements contenant au moins un des enseignants sélectionnés
+    for ev in events:
+        if any(t in ev["teachers"] for t in selected_teachers):
+            new_cal.add_component(ev["component"])
     return new_cal
 
-st.title("📅 Mini-bridge : Export d’emplois du temps par enseignant")
+st.title("Mini-bridge - 📅 Exporter un .ics par enseignant")
 
-uploaded_file = st.file_uploader("Chargez un fichier .ics", type=["ics"])
-
-if uploaded_file:
-    gcal, events, enseignants = load_calendar(uploaded_file)
-
-    selected = st.selectbox("Choisissez un enseignant :", enseignants)
-
-    if selected:
-        new_cal = filter_calendar(gcal, events, selected)
-        output = io.BytesIO(new_cal.to_ical())
-        st.download_button(
-            label=f"Télécharger le calendrier de {selected}",
-            data=output,
-            file_name=f"{selected.replace(' ', '_')}.ics",
-            mime="text/calendar"
+uploaded = st.file_uploader("Chargez votre fichier .ics", type=["ics"])
+if uploaded:
+    cal, events, enseignants = parse_calendar(uploaded.read())
+    if not enseignants:
+        st.warning(
+            "Aucun enseignant détecté. Vérifie le format : les enseignants doivent être au format `NOM, Prénom` dans le champ DESCRIPTION."
         )
+    else:
+        st.info(f"{len(enseignants)} enseignant(s) détecté(s).")
+        selected = st.multiselect("Sélectionnez un ou plusieurs enseignant(s) :", enseignants)
+
+        if selected:
+            # construire une liste d'événements correspondants pour prévisualisation
+            matching = []
+            for ev in events:
+                if any(t in ev["teachers"] for t in selected):
+                    comp = ev["component"]
+                    start = comp.get("DTSTART").dt if comp.get("DTSTART") else None
+                    end = comp.get("DTEND").dt if comp.get("DTEND") else None
+                    summary = str(comp.get("SUMMARY") or "")
+                    matching.append({
+                        "DTSTART": start,
+                        "DTEND": end,
+                        "SUMMARY": summary,
+                        "ENSEIGNANTS (extraits)": ", ".join(ev["teachers"]) or ""
+                    })
+
+            st.write(f"Événements correspondant aux enseignants sélectionnés : **{len(matching)}**")
+            if matching:
+                st.table(matching)
+
+            new_cal = build_filtered_calendar(cal, events, selected)
+            ics_bytes = new_cal.to_ical()
+            fname = "_".join([s.replace(" ", "_") for s in selected]) + ".ics"
+            st.download_button(
+                label="Télécharger le .ics filtré",
+                data=ics_bytes,
+                file_name=fname,
+                mime="text/calendar"
+            )
+        else:
+            st.info("Sélectionne au moins un enseignant pour générer le fichier .ics.")
