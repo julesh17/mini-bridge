@@ -1,19 +1,18 @@
-# 🎈 Blank app template
+# 📅 Mini-bridge : Exporter un .ics par enseignant
 
-A simple Streamlit app template for you to modify!
+Cette application **Streamlit** permet de filtrer des fichiers d’emploi du temps au format `.ics` par enseignant.  
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://blank-app-template.streamlit.app/)
+---
 
-### How to run it on your own machine
+## ✨ Fonctionnalités
 
-1. Install the requirements
+- Dépôt **d’un ou plusieurs fichiers `.ics`**.
+- Détection automatique des **enseignants** (`NOM, Prénom`) dans le champ `DESCRIPTION`.
+- Sélection d’un ou plusieurs enseignants pour générer un nouvel agenda personnalisé.
+- Ajout d’informations supplémentaires dans le `SUMMARY` :
+  - **Groupes** (`G1`, `G2`, …) extraits des descriptions.
+  - **Promo** (`P1`, `P2`, …) et **Classe** (`A1` … `A6`) extraites du nom du fichier si présentes.
+- Téléchargement du fichier `.ics` filtré, prêt à être importé dans Google Calendar, Outlook, iCalendar, etc.
+- Aperçu des séances retenues avant export.
 
-   ```
-   $ pip install -r requirements.txt
-   ```
 
-2. Run the app
-
-   ```
-   $ streamlit run streamlit_app.py
-   ```
