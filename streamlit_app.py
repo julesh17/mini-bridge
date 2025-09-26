@@ -1,8 +1,7 @@
 import streamlit as st
-from icalendar import Calendar, Event
+from icalendar import Calendar, Event, Timezone, TimezoneStandard, TimezoneDaylight
+from datetime import datetime
 import re
-import io
-import os
 
 st.set_page_config(page_title="Export ICS par enseignant (multi-fichiers + groupes/promo/classe)")
 
@@ -75,11 +74,40 @@ def parse_calendars(files):
                 })
     return all_cals, events, sorted(enseignants_set)
 
+def build_paris_vtimezone():
+    """Construit le bloc VTIMEZONE pour Europe/Paris (CET/CEST)."""
+    tz = Timezone()
+    tz.add("TZID", "Europe/Paris")
+    tz.add("X-LIC-LOCATION", "Europe/Paris")
+
+    # Heure d’hiver (CET)
+    standard = TimezoneStandard()
+    standard.add("TZOFFSETFROM", "+0200")
+    standard.add("TZOFFSETTO", "+0100")
+    standard.add("TZNAME", "CET")
+    standard.add("DTSTART", datetime(1970, 10, 25, 3, 0, 0))
+    standard.add("RRULE", {"FREQ": "YEARLY", "BYMONTH": 10, "BYDAY": "-1SU"})
+    tz.add_component(standard)
+
+    # Heure d’été (CEST)
+    daylight = TimezoneDaylight()
+    daylight.add("TZOFFSETFROM", "+0100")
+    daylight.add("TZOFFSETTO", "+0200")
+    daylight.add("TZNAME", "CEST")
+    daylight.add("DTSTART", datetime(1970, 3, 29, 2, 0, 0))
+    daylight.add("RRULE", {"FREQ": "YEARLY", "BYMONTH": 3, "BYDAY": "-1SU"})
+    tz.add_component(daylight)
+
+    return tz
+
 def build_filtered_calendar(orig_cals, events, selected_teachers):
     new_cal = Calendar()
     if orig_cals:
         for k, v in orig_cals[0].items():
             new_cal.add(k, v)
+
+    # 🔹 Ajouter définition Europe/Paris
+    new_cal.add_component(build_paris_vtimezone())
 
     for ev in events:
         if any(t in ev["teachers"] for t in selected_teachers):
@@ -97,7 +125,7 @@ def build_filtered_calendar(orig_cals, events, selected_teachers):
             if extra_parts:
                 summary = f"{summary} [{' - '.join(extra_parts)}]"
 
-            # cloner l’événement pour éviter de modifier l’original
+            # cloner l’événement
             new_event = Event()
             for k, v in comp.items():
                 if k.upper() == "SUMMARY":
