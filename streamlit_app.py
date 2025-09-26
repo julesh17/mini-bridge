@@ -1,6 +1,6 @@
 import streamlit as st
 from icalendar import Calendar, Event, Timezone, TimezoneStandard, TimezoneDaylight
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 
 st.set_page_config(page_title="Export ICS par enseignant (multi-fichiers + groupes/promo/classe)")
@@ -82,8 +82,8 @@ def build_paris_vtimezone():
 
     # Heure d’hiver (CET)
     standard = TimezoneStandard()
-    standard.add("TZOFFSETFROM", "+0200")
-    standard.add("TZOFFSETTO", "+0100")
+    standard.add("TZOFFSETFROM", timedelta(hours=2))
+    standard.add("TZOFFSETTO", timedelta(hours=1))
     standard.add("TZNAME", "CET")
     standard.add("DTSTART", datetime(1970, 10, 25, 3, 0, 0))
     standard.add("RRULE", {"FREQ": "YEARLY", "BYMONTH": 10, "BYDAY": "-1SU"})
@@ -91,8 +91,8 @@ def build_paris_vtimezone():
 
     # Heure d’été (CEST)
     daylight = TimezoneDaylight()
-    daylight.add("TZOFFSETFROM", "+0100")
-    daylight.add("TZOFFSETTO", "+0200")
+    daylight.add("TZOFFSETFROM", timedelta(hours=1))
+    daylight.add("TZOFFSETTO", timedelta(hours=2))
     daylight.add("TZNAME", "CEST")
     daylight.add("DTSTART", datetime(1970, 3, 29, 2, 0, 0))
     daylight.add("RRULE", {"FREQ": "YEARLY", "BYMONTH": 3, "BYDAY": "-1SU"})
